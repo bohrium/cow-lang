@@ -24,6 +24,10 @@ def indent(text, delim='  '):
 with open('templates/main_template.c') as f:
     main_template = f.read()
 
+basic_types = {
+    'Unit', 'Bool', 'Char', 'Int', 'Float'
+}
+
 class CodeGenerator(object):
     def __init__(self, parse_tree):
         self.defns = {
@@ -35,6 +39,7 @@ class CodeGenerator(object):
             #    'cname': '_main',
             #},
         }
+        self.globals = {'star':'Unit'} 
 
         self.var_count = 0
 
@@ -86,9 +91,9 @@ class CodeGenerator(object):
         return self.defns[self.curr_ctxt()]
 
     def render_type_defn(self, type_nm):
-        ccode = '{}\n{}'.format(
-            '\n'.join(
-                self.render_type_defn(child)
+        ccode = '{}{}'.format(
+            ''.join(
+                '{}\n'.format(self.render_type_defn(child))
                 for child in self.defns[type_nm]['new_child_types']
             ),
             '\n'.join(self.defns[type_nm]['lines'])
@@ -162,12 +167,15 @@ class CodeGenerator(object):
         pre(tree.label == 'DECLARATION', 'unexpected tree label')
         judgement, = tree.relevant_kids()
         ident, typename = judgement.relevant_kids()
-        return (x.get_source() for x in (ident, typename))
+        ident, typename = (x.get_source() for x in (ident, typename))
+        while typename.startswith('ref '): 
+            typename = typename[4:]+'*'
+        return ident, typename
 
     def process_assignment(self, tree):
         pre(tree.label == 'ASSIGNMENT', 'unexpected tree label')
-        ident, expr = tree.relevant_kids()
-        return ident.get_source(), expr
+        lvalue, expr = tree.relevant_kids()
+        return lvalue, expr
 
     def process_guarded_sequence(self, tree):
         body = tree
@@ -220,7 +228,7 @@ class CodeGenerator(object):
                     arg_types_by_nm={'comp': child_type_name}
                 )
                 self.write_code('{} val = {{ .data={{ ._{}=_comp }}, .tag={} }};', type_name, ident, i)
-                self.write_code('return val;', ident, i)
+                self.write_code('return val;')
             self.pop_ctxt()
 
             self.write_code(' _{};', ident, augment_old_line=True)
@@ -232,6 +240,22 @@ class CodeGenerator(object):
 
         if kind.get_source()=='struct':
             self.process_type_body('struct', type_name, judgements)
+            child_fields = self.curr_defn()['child_fields']
+            child_types = self.curr_defn()['child_types']
+
+            univ = 'make_{}'.format(type_name)
+
+            self.push_ctxt(univ)
+            self.make_defn('function', ident=univ, out_type=type_name,
+                arg_types_by_nm={nm:tp for nm,tp in zip(child_fields, child_types)}
+            )
+            self.write_code('{} val = {{ {} }};',
+                type_name,
+                ', '.join('_{}'.format(nm) for nm in child_fields)
+            )
+            self.write_code('return val;')
+            self.pop_ctxt()
+
         elif kind.get_source()=='enum':
             self.write_code('union {{')
             self.process_type_body('enum', type_name, judgements)
@@ -248,10 +272,14 @@ class CodeGenerator(object):
         while tree.label=='TYPE':
             tree, = tree.relevant_kids()
 
-        if tree.label=='BASETYPE':
+        if tree.label=='BASE_TYPE':
             child_type_nm = tree.get_source()
             self.write_code(child_type_nm)
             self.curr_defn()['child_types'].append(child_type_nm)
+        elif tree.label == 'REF_TYPE': 
+            kid, = tree.relevant_kids() 
+            child_type_nm = self.process_type(kid, name)
+            self.write_code('*', augment_old_line=True)
         else:
             child_type_nm = '{}__{}'.format(self.curr_ctxt(), name) 
             self.curr_defn()['child_types'].append(child_type_nm)
@@ -267,7 +295,7 @@ class CodeGenerator(object):
         return child_type_nm
         
     def process_type_defn(self, tree):
-        pre(tree.label == 'TYPEDEFN', 'unexpected tree label')
+        pre(tree.label == 'TYPE_DEFN', 'unexpected tree label')
 
         kind, nm, judgements = tree.relevant_kids()
         nm = nm.get_source()
@@ -277,7 +305,7 @@ class CodeGenerator(object):
         self.process_composite_type(kind, nm, judgements)
         self.pop_ctxt()
 
-    def translate_expr(self, tree, types_by_nm={}):
+    def translate_expr(self, tree, types_by_nm):
         expansions = {
             'or':' || ', 'and':' && ', 'not':'!',
             '+':' + '
@@ -287,18 +315,21 @@ class CodeGenerator(object):
                 (lambda s: (
                     expansions[s] if s in expansions else s
                 ))(k.strip())
-            )
-            if type(k) == str else
+            ) if type(k) == str else
             (
                 (lambda ident: ( 
-                    self.defns[ident]['cname']
-                    if ident in self.defns else 
-                    '_{}'.format(ident)
-                    if ident in types_by_nm else 
-                    pre(False, '`{}` not declared! (ctxt {})', ident, self.curr_ctxt())
+                    '_{}'.format(ident) if ident in types_by_nm else 
+                    '_{}'.format(ident) if ident in self.globals else 
+                    self.defns[ident]['cname'] if ident in self.defns and self.defns[ident]['kind']=='function' else 
+                    pre(False, '`{}` not declared! (ctxt {})'.format(ident, self.curr_ctxt()))
                 ))(k.get_source())
-            )
-            if k.label == 'LOWER_IDENTIFIER' else
+            ) if k.label == 'LOWER_IDENT' else
+            (
+                (lambda ident: ( 
+                    '_make_{}'.format(ident) if ident in self.defns and self.defns[ident]['alg']=='struct' else 
+                    pre(False, '`{}` not declared! (ctxt {})'.format(ident, self.curr_ctxt()))
+                ))(k.get_source())
+            ) if k.label == 'UPPER_IDENT' else
             (
                 self.translate_expr(k, types_by_nm)
             )
@@ -310,7 +341,7 @@ class CodeGenerator(object):
 
     def get_type(self, tree, types_by_nm):
         while True:
-            if tree.label=='LOWER_IDENTIFIER':
+            if tree.label=='LOWER_IDENT':
                 return types_by_nm[tree.get_source()]
             kids = list(tree.relevant_kids())
             if len(kids)==1:
@@ -318,11 +349,20 @@ class CodeGenerator(object):
             else:
                 return
 
+    def destroy(self, name, type_nm): 
+        if type_nm in basic_types:
+            pass
+        elif type_nm.startswith('*'):
+            pass
+        else:
+            pass
+            #self.write_code('del {};', name)
+
     def analyze_block(self, tree, types_by_nm={}):
         ''' assume no function defns within
         '''
         # copy:
-        types_by_nm = types_by_nm.copy()# {k:v for k,v in types_by_nm.items()}
+        types_by_nm = types_by_nm.copy()
 
         node_stack = list(tree.relevant_kids())
         while node_stack:
@@ -334,22 +374,26 @@ class CodeGenerator(object):
                 self.write_code('ABORT;')
             elif k.label == 'DECLARATION':
                 ident, typename = self.process_declaration(k)
-                pre(ident not in types_by_nm,
+                pre(ident not in types_by_nm and ident not in self.globals,
                     'variable {} already declared as {}!'.format(
-                        ident, types_by_nm[ident] if ident in types_by_nm else None
+                        ident,
+                        types_by_nm[ident] if ident in types_by_nm else
+                        self.globals[ident] if ident in self.globals else
+                        None
                     ) 
                 )
                 types_by_nm[ident] = typename
+
                 self.write_code('{} _{};', typename, ident)
             elif k.label == 'ASSIGNMENT':
-                ident, expr = self.process_assignment(k) 
-                if ident=='return':
+                lvalue, expr = self.process_assignment(k) 
+                if lvalue.get_source().strip()=='return':
                     self.write_code('return {};', self.translate_expr(expr, types_by_nm))
                 else:
-                    pre(ident in types_by_nm, '{} not declared! (ctxt {})'.format(ident, self.curr_ctxt()))
                     self.write_code(
-                        '_{} = {};',
-                        ident, self.translate_expr(expr, types_by_nm)
+                        '{} = {};',
+                        self.translate_expr(lvalue, types_by_nm),
+                        self.translate_expr(expr, types_by_nm)
                     )
             elif k.label == 'MATCH': 
                 expr, guardeds = k.relevant_kids()  
@@ -393,7 +437,7 @@ class CodeGenerator(object):
                         'if' if i==0 else '} else if',
                         self.translate_expr(cond, types_by_nm).strip()
                     )
-                    self.analyze_block(cons, types_by_nm=types_by_nm)
+                    self.analyze_block(cons, types_by_nm)
                 self.write_code('}} else {{')
                 self.write_code('ABORT;')
                 self.write_code('}}')
@@ -409,21 +453,21 @@ class CodeGenerator(object):
                         'if' if i==0 else '} else if',
                         self.translate_expr(cond, types_by_nm).strip()
                     )
-                    self.analyze_block(cons, types_by_nm=types_by_nm)
+                    self.analyze_block(cons, types_by_nm)
                 self.write_code('}} else {{')
                 self.write_code('break;')
                 self.write_code('}}')
                 self.write_code('}}')
-            elif k.label == 'TYPEDEFN':
+            elif k.label == 'TYPE_DEFN':
                 self.process_type_defn(k)
             elif k.label == 'FUNCTION':
                 ident, arg_types_by_nm, out_type, body = self.process_function(k)
                 print(CC+'@R creating ctxt {}...@D '.format(ident))
                 self.push_ctxt(ident)
                 self.make_defn('function', ident=ident, out_type=out_type,
-                    arg_types_by_nm=arg_types_by_nm
+                    arg_types_by_nm=arg_types_by_nm.copy()
                 )
-                self.analyze_block(body, types_by_nm=arg_types_by_nm.copy())
+                self.analyze_block(body, arg_types_by_nm)
                 self.pop_ctxt()
             elif k.label == 'PRINT': 
                 ident, = k.relevant_kids()
@@ -444,6 +488,9 @@ class CodeGenerator(object):
             else:
                 node_stack = list(k.relevant_kids()) + node_stack
 
+        if self.ctxt_stack:
+            for nm in types_by_nm:
+                self.destroy(nm, types_by_nm[nm])
    
 if __name__ == '__main__':
     import sys
@@ -463,4 +510,11 @@ if __name__ == '__main__':
     G = CodeGenerator(tree) 
     with open(c_filenm, 'w') as f:
         f.write(G.total_print())
-    #print(G.total_print())
+    input(CC+'@P show c code?@D ')
+    paragraphs = G.total_print().split('\n\n')
+    for i, par in enumerate(paragraphs):
+        print(par)
+        if len(par.split('\n'))<=3:
+            print()
+        else:
+            input(CC+'@P more?@D ')
