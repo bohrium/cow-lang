@@ -40,12 +40,12 @@ class CLType:
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
     #~~~~~~~~~  0.1 Rendering  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
-    def to_C(self): 
+    def C_defn(self): 
         if self.kind=='base': return self.name
         elif self.kind=='prod':
             return 'struct {{\n{}\n}}'.format(
                 '\n'.join(
-                    '{} {};'.format(tp.to_C().strip(), nm)
+                    '{} {};'.format(tp.C_defn().strip(), nm)
                     for nm, tp in self.children.items()
                 ),
             )
@@ -53,7 +53,7 @@ class CLType:
             return 'struct {{\n{}\n{}\n}}'.format(
                 'union {{\n{}\n}} data;'.format(
                     '\n'.join(
-                        '{} {};'.format(tp.to_C().strip(), nm)
+                        '{} {};'.format(tp.C_defn().strip(), nm)
                         for nm, tp in self.children.items()
                     ),
                 ),
@@ -87,5 +87,5 @@ tICp = CLType(kind='prod', hey=tInt, bay=tChar)
 tICs = CLType(kind='enum', hey=tInt, bay=tChar)
 tICIC = CLType(kind='prod', hey=tICp, bay=tICs)
 print(tICIC)
-print(indent(tICIC.to_C()))
-#print(CLType(kind='enum', hey=tICp, bay=tICs).to_C())
+print(indent(tICIC.C_defn()))
+#print(CLType(kind='enum', hey=tICp, bay=tICs).C_defn())

@@ -1,5 +1,5 @@
 ''' author: samtenka
-    change: 2020-03-15
+    change: 2020-03-16
     create: 2019-05-18
     descrp: translate cow-lang to C
     to use:
@@ -21,61 +21,122 @@ def indent(text, delim='  '):
         depth += diff - min(0, diff)
     return '\n'.join(indented)
 
-
 with open('templates/main_template.c') as f:
     main_template = f.read()
 
 class CodeGenerator(object):
     def __init__(self, parse_tree):
-        self.definitions = {
+        self.defns = {
             'main': {
-                'kind': 'func',
-                'argtps_by_nm': [],
-                'outtype': 'Unit',
+                'kind': 'function',
+                'arg_types_by_nm': {},
+                'out_type': 'Unit',
                 'lines': [],
                 'cname': '_main',
             },
         }
 
-        self.analyze_block(parse_tree, ctxt='main')
+        self.var_count = 0
+
+        self.ctxt_stack = ['main']
+        self.analyze_block(parse_tree) 
         print(CC+'@O successful analysis!@D ')
+
+    def fresh_var_nm(self):
+        self.var_count += 1
+        return 'x{}'.format(self.var_count-1);
+
+    def curr_ctxt(self): return self.ctxt_stack[-1]
+    def push_ctxt(self, ctxt): self.ctxt_stack.append(ctxt)
+    def pop_ctxt(self): return self.ctxt_stack.pop()
+
+    def make_defn(self, kind, **kwargs):
+        ctxt = self.curr_ctxt() 
+        pre(ctxt not in self.defns,
+            '{} {} already declared!'.format(kind, ctxt)
+        )
+        val = {
+            'root_type': lambda:{
+                'kind': 'root_type',
+                'alg': None,
+                'child_fields': [],
+                'child_types': [],
+                'new_child_types': [],
+                'lines': [],
+            },
+            'child_type': lambda:{
+                'kind': 'child_type',
+                'alg': None,
+                'child_fields': [],
+                'child_types': [],
+                'new_child_types': [],
+                'lines': [],
+            },
+            'function': lambda:{ 
+                'kind': 'function',
+                'arg_types_by_nm': kwargs['arg_types_by_nm'],
+                'out_type': kwargs['out_type'],
+                'lines': [],
+                'cname': '_' + kwargs['ident'], 
+            }
+        }[kind]()
+        self.defns[ctxt] = val
+    def curr_defn(self):
+        return self.defns[self.curr_ctxt()]
+
+    def render_type_defn(self, type_nm):
+        ccode = '{}\n{}'.format(
+            '\n'.join(
+                self.render_type_defn(child)
+                for child in self.defns[type_nm]['new_child_types']
+            ),
+            '\n'.join(self.defns[type_nm]['lines'])
+        )
+        return ccode
 
     def render_type_defns(self):
         ccode = '\n\n'.join(
-            '\n'.join(data['lines'])
-            for ctxt, data in self.definitions.items()
-            if data['kind'] == 'type'
+            self.render_type_defn(type_nm)
+            for type_nm, data in self.defns.items()
+            if data['kind']=='root_type'
         )
         return ccode
 
     def render_func_decls(self):
         ccode = '\n'.join(
             '{} {}({});'.format(
-                data['outtype'],
+                data['out_type'],
                 data['cname'],
                 ', '.join(
                     '{} _{}'.format(typename, ident)
-                    for (ident, typename) in data['argtps_by_nm']
+                    for ident, typename in data['arg_types_by_nm'].items()
                 )
             )
-            for ctxt, data in self.definitions.items()
-            if data['kind'] == 'func'
+            for data in self.defns.values()
+            if data['kind'] == 'function'
         )
         return ccode
 
     def render_func_impls(self):
         ccode = '\n\n'.join(
-            '{} {}({}) {{\n{}\n}}'.format(
-                data['outtype'],
-                data['cname'],
-                ', '.join(
-                    '{} _{}'.format(typename, ident)
-                    for (ident, typename) in data['argtps_by_nm']
-                ),
-                '\n'.join(data['lines'])
-            )
-            for ctxt, data in self.definitions.items()
-            if data['kind'] == 'func'
+            (lambda body:
+                (
+                    '{} {}({}) {{ {} }}'
+                    if len(body)<40 and '\n' not in body else
+                    '{} {}({})\n{{\n{}\n}}'
+                )
+                .format(
+                    data['out_type'],
+                    data['cname'],
+                    ', '.join(
+                        '{} _{}'.format(typename, ident)
+                        for ident, typename in data['arg_types_by_nm'].items()
+                    ),
+                    body
+                )
+            )('\n'.join(ln for ln in data['lines']))
+            for data in self.defns.values()
+            if data['kind'] == 'function'
         )
         return ccode
 
@@ -87,12 +148,13 @@ class CodeGenerator(object):
         )
         return ccode
 
-    def write_code(self, string, ctxt, newline=True):
-        for line in string.split('\n'):
-            if newline or not self.definitions[ctxt]['lines']:
-                self.definitions[ctxt]['lines'].append(line)
-            else:
-                self.definitions[ctxt]['lines'][-1] += line
+    def write_code(self, string, *args, augment_old_line=False):
+        ctxt = self.ctxt_stack[-1]
+        lines = self.defns[ctxt]['lines']
+        string = string.format(*args) 
+        for fresh_line in string.split('\n'):
+            if augment_old_line and lines: lines[-1] += fresh_line
+            else: lines.append(fresh_line)
 
     def process_declaration(self, tree):
         pre(tree.label == 'DECLARATION', 'unexpected tree label')
@@ -121,93 +183,99 @@ class CodeGenerator(object):
         pre(tree.label == 'FUNCTION', 'unexpected tree label')
         header, body = tree.relevant_kids()
         ident, functype = header.relevant_kids() 
-        arglist, outtype = functype.relevant_kids() 
-        argtps_by_nm = []
+        arglist, out_type = functype.relevant_kids() 
+        arg_types_by_nm = {}
         arglist = list(arglist.relevant_kids())
         while arglist:
             judgement = arglist[0]
             argident, argtype = judgement.relevant_kids()
-            argtps_by_nm.append((argident.get_source(), argtype.get_source()))
+            arg_types_by_nm[argident.get_source()] = argtype.get_source()
             arglist = arglist[1:]
             if arglist:
                 arglist = list(arglist[0].relevant_kids())
-        return (ident.get_source(), argtps_by_nm, outtype.get_source(), body)
+        return (ident.get_source(), arg_types_by_nm, out_type.get_source(), body)
 
-    def process_typebody(self, judgements, ctxt):
-        branch_names = []
-
+    def process_type_body(self, alg, type_name, judgements):
+        self.curr_defn()['alg'] = alg
         js = [judgements]
 
+        i = 0
         while js:
             js = list(js[0].relevant_kids())
             ident, tp = js[0].relevant_kids() 
-            branch_names.append(ident.get_source())
-            self.process_type(tp, ctxt)
-            self.write_code(' {};'.format(ident.get_source()), ctxt, newline=False)
+            ident = ident.get_source()
+            self.curr_defn()['child_fields'].append(ident)
+            child_type_name = self.process_type(tp, ident)
+
+            self.push_ctxt(ident)
+            if alg=='struct': 
+                self.make_defn('function', ident=ident, out_type=child_type_name,
+                    arg_types_by_nm={'prod': type_name}
+                )
+                self.write_code('return _prod._{};', ident)
+            elif alg=='enum': 
+                self.make_defn('function', ident=ident, out_type=type_name,
+                    arg_types_by_nm={'comp': child_type_name}
+                )
+                self.write_code('{} val = {{ .data={{ ._{}=_comp }}, .tag={} }};', type_name, ident, i)
+                self.write_code('return val;', ident, i)
+            self.pop_ctxt()
+
+            self.write_code(' _{};', ident, augment_old_line=True)
             js = js[1:]
+            i += 1
 
-        return branch_names
+    def process_composite_type(self, kind, type_name, judgements):
+        self.write_code('typedef struct {} {{', type_name)
 
-    def process_type(self, tree, ctxt):
+        if kind.get_source()=='struct':
+            self.process_type_body('struct', type_name, judgements)
+        elif kind.get_source()=='enum':
+            self.write_code('union {{')
+            self.process_type_body('enum', type_name, judgements)
+            self.write_code('}} data; ')
+            self.write_code('char tag;');
+        else:
+            pre(False, '')
+
+        self.write_code('}} {};', type_name)
+
+    def process_type(self, tree, name):
         pre(tree.label == 'TYPE', 'unexpected tree label')
 
         while tree.label=='TYPE':
             tree, = tree.relevant_kids()
 
         if tree.label=='BASETYPE':
-            self.write_code(tree.get_source(), ctxt)
-            return
-
-        kind, judgements = tree.relevant_kids()
-        if kind.get_source()=='struct':
-            self.write_code('struct {', ctxt)
-            self.process_typebody(judgements, ctxt)
-            self.write_code('}', ctxt)
-        elif kind.get_source()=='enum':
-            self.write_code('struct {', ctxt)
-            self.write_code('union {', ctxt)
-            branch_names = self.process_typebody(judgements, ctxt)
-            self.write_code('} data; ', ctxt)
-            self.write_code(
-                'enum {{ {} }} tag;'.format(', '.join(branch_names)), ctxt
-            )
-            self.write_code('}', ctxt)
+            child_type_nm = tree.get_source()
+            self.write_code(child_type_nm)
+            self.curr_defn()['child_types'].append(child_type_nm)
         else:
-            pre(False, '')
+            child_type_nm = '{}__{}'.format(self.curr_ctxt(), name) 
+            self.curr_defn()['child_types'].append(child_type_nm)
+            self.curr_defn()['new_child_types'].append(child_type_nm)
+            self.write_code(child_type_nm)
+
+            self.push_ctxt(child_type_nm)
+            self.make_defn('child_type')
+            kind, judgements = tree.relevant_kids()
+            self.process_composite_type(kind, child_type_nm, judgements)
+            self.pop_ctxt()
+
+        return child_type_nm
         
-    def process_typedefn(self, tree, ctxt):
+    def process_type_defn(self, tree):
         pre(tree.label == 'TYPEDEFN', 'unexpected tree label')
+
         kind, nm, judgements = tree.relevant_kids()
-        ctxt = nm.get_source() 
+        nm = nm.get_source()
 
-        pre(ctxt not in self.definitions,
-            'type {} already declared!'.format(ctxt)
-        )
-        self.definitions[ctxt] = {
-            'kind': 'type',
-            'lines': [],
-        }
+        self.push_ctxt(nm)
+        self.make_defn('root_type')
+        self.process_composite_type(kind, nm, judgements)
+        self.pop_ctxt()
 
-        if kind.get_source()=='struct':
-            self.write_code('struct {} {{'.format(nm.get_source()), ctxt)
-            self.process_typebody(judgements, ctxt)
-        elif kind.get_source()=='enum':
-            self.write_code('struct {} {{'.format(nm.get_source()), ctxt)
-            self.write_code('union {', ctxt)
-            branch_names = self.process_typebody(judgements, ctxt)
-            self.write_code('} data; ', ctxt)
-            self.write_code(
-                'enum {{ {} }} tag;'.format(', '.join(branch_names)), ctxt
-            )
-        else:
-            pre(False, '')
- 
-        self.write_code('};', ctxt)
-
-
-
-
-    def translate_expr(self, tree, ctxt, tps_by_nm={}):
+    def translate_expr(self, tree, types_by_nm={}):
         expansions = {
             'or':' || ', 'and':' && ', 'not':'!',
             '+':' + '
@@ -221,16 +289,16 @@ class CodeGenerator(object):
             if type(k) == str else
             (
                 (lambda ident: ( 
-                    '_{}'.format(self.definitions[ident]['cname'])
-                    if ident in self.definitions else 
+                    self.defns[ident]['cname']
+                    if ident in self.defns else 
                     '_{}'.format(ident)
-                    if ident in tps_by_nm else 
-                    pre(False, '`{}` not declared! (ctxt {})'.format(ident, ctxt))
+                    if ident in types_by_nm else 
+                    pre(False, '`{}` not declared! (ctxt {})', ident, self.curr_ctxt())
                 ))(k.get_source())
             )
             if k.label == 'LOWER_IDENTIFIER' else
             (
-                self.translate_expr(k, ctxt, tps_by_nm)
+                self.translate_expr(k, types_by_nm)
             )
             for k in tree.kids
         )
@@ -238,11 +306,21 @@ class CodeGenerator(object):
         #    ccode = '({})'.format(ccode)
         return ccode
 
-    def analyze_block(self, tree, ctxt, tps_by_nm={}):
-        ''' assume no function definitions within
+    def get_type(self, tree, types_by_nm):
+        while True:
+            if tree.label=='LOWER_IDENTIFIER':
+                return types_by_nm[tree.get_source()]
+            kids = list(tree.relevant_kids())
+            if len(kids)==1:
+                tree = kids[0]
+            else:
+                return
+
+    def analyze_block(self, tree, types_by_nm={}):
+        ''' assume no function defns within
         '''
         # copy:
-        tps_by_nm = tps_by_nm.copy()# {k:v for k,v in tps_by_nm.items()}
+        types_by_nm = types_by_nm.copy()# {k:v for k,v in types_by_nm.items()}
 
         node_stack = list(tree.relevant_kids())
         while node_stack:
@@ -251,44 +329,56 @@ class CodeGenerator(object):
             if k.label == 'SKIP':
                 pass
             elif k.label == 'ABORT':
-                self.write_code('ABORT;', ctxt)
+                self.write_code('ABORT;')
             elif k.label == 'DECLARATION':
                 ident, typename = self.process_declaration(k)
-                pre(ident not in tps_by_nm,
+                pre(ident not in types_by_nm,
                     'variable {} already declared as {}!'.format(
-                        ident, tps_by_nm[ident] if ident in tps_by_nm else None
+                        ident, types_by_nm[ident] if ident in types_by_nm else None
                     ) 
                 )
-                tps_by_nm[ident] = typename
-                self.write_code('{} _{};'.format(typename, ident), ctxt)
+                types_by_nm[ident] = typename
+                self.write_code('{} _{};', typename, ident)
             elif k.label == 'ASSIGNMENT':
                 ident, expr = self.process_assignment(k) 
                 if ident=='return':
-                    self.write_code('return {};'.format(
-                        self.translate_expr(expr, ctxt, tps_by_nm)
-                    ), ctxt)
+                    self.write_code('return {};', self.translate_expr(expr, types_by_nm))
                 else:
-                    pre(ident in tps_by_nm,
-                        '{} not declared! (ctxt {})'.format(ident, ctxt)
-                    )
+                    pre(ident in types_by_nm, '{} not declared! (ctxt {})'.format(ident, self.curr_ctxt()))
                     self.write_code(
-                        '_{} = {};'.format(
-                            ident, (self.translate_expr(expr, ctxt, tps_by_nm))
-                        ), ctxt
+                        '_{} = {};',
+                        ident, self.translate_expr(expr, types_by_nm)
                     )
             elif k.label == 'MATCH': 
-                print('HIII')
                 expr, guardeds = k.relevant_kids()  
+                expr_type = self.get_type(expr, types_by_nm)
+                pre(self.defns[expr_type]['alg']=='enum',
+                    'can only match on sum types!'
+                )
+                alternatives = self.defns[expr_type]['child_fields']
+
+                temp_nm = self.fresh_var_nm() 
                 cond_cons_pairs = self.process_guarded_sequence(guardeds)
-                self.write_code('switch ({}.tag) {{'.format(
-                    self.translate_expr(expr, ctxt, tps_by_nm)
-                ), ctxt)
+                self.write_code('{} {} = {};',
+                    expr_type, temp_nm,
+                    self.translate_expr(expr, types_by_nm)
+                )
+                self.write_code('switch ({}.tag) {{', temp_nm)
                 for i, (cond, cons) in enumerate(cond_cons_pairs): 
-                    self.write_code(
-                        'case {} :'.format(cond.get_source()), ctxt
+                    alt, name = cond.relevant_kids()
+                    alt = alt.get_source()
+                    name = name.get_source()
+                    idx = alternatives.index(alt)
+                    self.write_code('case {} /*{}*/ : {{',
+                        idx, alt
                     )
-                    self.analyze_block(cons, ctxt, tps_by_nm=tps_by_nm)
-                self.write_code('}', ctxt)
+                    self.write_code('{} _{} = {}.data.{};',
+                        self.defns[expr_type]['child_types'][idx],
+                        name, temp_nm, alt 
+                    )
+                    self.analyze_block(cons, types_by_nm)
+                    self.write_code('}} break;')
+                self.write_code('}}')
             elif k.label == 'IF': 
                 guardeds, = k.relevant_kids()
                 cond_cons_pairs = self.process_guarded_sequence(guardeds)
@@ -297,79 +387,56 @@ class CodeGenerator(object):
                 )
                 for i, (cond, cons) in enumerate(cond_cons_pairs): 
                     self.write_code(
-                        '{} ({}) {{'.format(
-                            'if' if i==0 else '} else if',
-                            self.translate_expr(cond, ctxt, tps_by_nm).strip()
-                        ), ctxt
+                        '{} ({}) {{',
+                        'if' if i==0 else '} else if',
+                        self.translate_expr(cond, types_by_nm).strip()
                     )
-                    self.analyze_block(cons, ctxt, tps_by_nm=tps_by_nm)
-                self.write_code('} else {', ctxt)
-                self.write_code('ABORT;', ctxt)
-                self.write_code('}', ctxt)
+                    self.analyze_block(cons, types_by_nm=types_by_nm)
+                self.write_code('}} else {{')
+                self.write_code('ABORT;')
+                self.write_code('}}')
             elif k.label == 'DO': 
                 cond_cons_pairs = self.process_guarded_sequence(k)
                 pre(cond_cons_pairs,
                     'repetitive constructs must have at least one branch'
                 )
-                self.write_code('while (true) {', ctxt)
+                self.write_code('while (true) {')
                 for i, (cond, cons) in enumerate(cond_cons_pairs): 
                     self.write_code(
-                        '{} ({}) {{'.format(
-                            'if' if i==0 else '} else if',
-                            self.translate_expr(cond, ctxt, tps_by_nm).strip()
-                        ), ctxt
+                        '{} ({}) {{',
+                        'if' if i==0 else '} else if',
+                        self.translate_expr(cond, types_by_nm).strip()
                     )
-                    self.analyze_block(cons, ctxt, tps_by_nm=tps_by_nm)
-                self.write_code('} else {', ctxt)
-                self.write_code('break;', ctxt)
-                self.write_code('}', ctxt)
-                self.write_code('}', ctxt)
+                    self.analyze_block(cons, types_by_nm=types_by_nm)
+                self.write_code('}} else {{')
+                self.write_code('break;')
+                self.write_code('}}')
+                self.write_code('}}')
             elif k.label == 'TYPEDEFN':
-                self.process_typedefn(k, ctxt)
+                self.process_type_defn(k)
             elif k.label == 'FUNCTION':
-                ident, argtps_by_nm, outtype, body = self.process_function(k)
-                new_ctxt = ident
-                pre(new_ctxt not in self.definitions,
-                    'function {} already declared!'.format(new_ctxt)
+                ident, arg_types_by_nm, out_type, body = self.process_function(k)
+                print(CC+'@R creating ctxt {}...@D '.format(ident))
+                self.push_ctxt(ident)
+                self.make_defn('function', ident=ident, out_type=out_type,
+                    arg_types_by_nm=arg_types_by_nm
                 )
-                print(CC+'@R create ctxt {}...@D '.format(new_ctxt))
-                self.definitions[ident] = {
-                    'kind': 'func',
-                    'argtps_by_nm': argtps_by_nm,
-                    'outtype': outtype,
-                    'lines': [],
-                    'cname': '_' + ident 
-                }
-                self.analyze_block(
-                    body,
-                    tps_by_nm={k:v for k,v in argtps_by_nm},
-                    ctxt=new_ctxt
-                )
+                self.analyze_block(body, types_by_nm=arg_types_by_nm.copy())
+                self.pop_ctxt()
             elif k.label == 'PRINT': 
                 ident, = k.relevant_kids()
                 ident = ident.get_source()
-                pre(ident in tps_by_nm,
-                    '{} not declared! (print ctxt {})'.format(ident, ctxt)
+                pre(ident in types_by_nm,
+                    '{} not declared! (print ctxt {})'.format(ident, self.curr_ctxt())
                 )
-                typename = tps_by_nm[ident]
+                typename = types_by_nm[ident]
+
                 if typename == 'Float':
-                    self.write_code(
-                        'printf("{} \\t %f\\n", _{});'.format(
-                            ident, ident
-                        ),
-                    ctxt)
+                    self.write_code('printf("{} \\t %f\\n", _{});', ident, ident)
                 elif typename == 'Int':
-                    self.write_code(
-                        'printf("{} \\t %d\\n", _{});'.format(
-                            ident, ident
-                        ),
-                    ctxt)
+                    self.write_code('printf("{} \\t %d\\n", _{});', ident, ident)
                 elif typename == 'Bool':
-                    self.write_code(
-                        'printf("{} \\t %s\\n", _{}?"true":"false");'.format(
-                            ident, ident
-                        ),
-                    ctxt)
+                    self.write_code('printf("{} \\t %s\\n", _{}?"true":"false");', ident, ident)
                 else:
                     pre(False, 'unknown typename!')
             else:
