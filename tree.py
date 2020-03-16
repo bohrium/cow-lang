@@ -29,17 +29,17 @@ class ParseTree:
         ''' no literal strings and no ignoreds '''
         return (k for k in self.kids if (type(k) != str) and not k.ignore)
 
-    def display(self, depth=0, delim='|  ', collapse=False):
+    def display(self, depth=0, delim='|  ', collapse=False, max_depth=float('+inf')):
         '''
             `collapse` indicates whether to collapse unary vines down to
             leafmost node of vine 
         '''
-        if self.ignore:
+        if self.ignore or max_depth < depth:
             return
         elif not self.unroll and (not collapse or self.width()!=1):
             source = self.get_source()
-            if len(source)>64+3:
-                source = '{}@D ...@R {}'.format(source[:32], source[-32:])
+            if len(source)>40+3:
+                source = '{}@D ...@R {}'.format(source[:20], source[-20:])
             print(CC+'{}@B {}@D [@R {}@D ]'.format(
                 delim*depth, self.label, source
             ))
@@ -49,7 +49,7 @@ class ParseTree:
                 pass
                 #print(CC+'{}@R {}@D '.format(delim*depth, k))
             else:
-                k.display(depth, delim, collapse)
+                k.display(depth, delim, collapse, max_depth)
 
 class Text:
     def __init__(self, string):
@@ -72,4 +72,8 @@ class Text:
         return False
     def is_at_end(self):
         return self.index == len(self.string)
-
+    def context(self, margin=20):
+        return ('@D ...@O {}@P {}@D ...'.format(
+            self.string[self.index-margin : self.index],
+            self.string[self.index : self.index+margin]
+        ))

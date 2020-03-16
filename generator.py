@@ -27,18 +27,19 @@ with open('templates/main_template.c') as f:
 class CodeGenerator(object):
     def __init__(self, parse_tree):
         self.defns = {
-            'main': {
-                'kind': 'function',
-                'arg_types_by_nm': {},
-                'out_type': 'Unit',
-                'lines': [],
-                'cname': '_main',
-            },
+            #'main': {
+            #    'kind': 'function',
+            #    'arg_types_by_nm': {},
+            #    'out_type': 'Unit',
+            #    'lines': [],
+            #    'cname': '_main',
+            #},
         }
 
         self.var_count = 0
 
-        self.ctxt_stack = ['main']
+        self.ctxt_stack = []
+        #self.ctxt_stack = ['main']
         self.analyze_block(parse_tree) 
         print(CC+'@O successful analysis!@D ')
 
@@ -141,8 +142,9 @@ class CodeGenerator(object):
         return ccode
 
     def total_print(self):
+        pre('main' in self.defns, 'entry point `main` undefined!')
         ccode = indent(main_template 
-            .replace('/*TYPE_DEFNS*/',          self.render_type_defns())
+            .replace('/*TYPE_DEFNS*/',     self.render_type_defns())
             .replace('/*FUNCTION_DECLS*/', self.render_func_decls())
             .replace('/*FUNCTION_IMPLS*/', self.render_func_impls())
         )
@@ -452,14 +454,13 @@ if __name__ == '__main__':
     else:
         assert len(sys.argv) in [1, 3], "expect 0 or 2 command line arguments"
 
-    cow_parser = ParserGenerator('grammars/cow-lang-type.grammar').parsers['MAIN']
+    cow_parser = ParserGenerator('grammars/cow-lang-type.grammar').final()
     with open(cow_filenm) as f:
-        text = f.read()
-    text = preprocess(text)
-    tree = cow_parser(Text(text))
-    tree.display()
+        text = Text(preprocess(f.read()))
+    tree = cow_parser(text)
+    tree.display(max_depth=2)
 
     G = CodeGenerator(tree) 
     with open(c_filenm, 'w') as f:
         f.write(G.total_print())
-    print(G.total_print())
+    #print(G.total_print())

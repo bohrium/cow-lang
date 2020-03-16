@@ -1,0 +1,58 @@
+enum MaybeIntPair {
+    none : Unit;
+    some : struct {
+        fst : Int;
+        snd : Int
+    }
+};
+
+fn main() : Unit {
+    var a:Int;
+    a = 6;
+    print a;
+}
+
+//
+//enum MyMaybeIntPair {
+//    none : Unit;
+//    some : struct {
+//        fst : Int;
+//        snd : Int
+//    }
+//}
+
+//;
+
+//var a : MaybeIntPair;
+//var a : MaybeIntPair;
+//var b : Int;
+//var c : Bool;
+//
+//match a {
+//  none z ~> skip
+//  some z ~> skip 
+//}
+
+//fn f(c:Int) : Int
+//{
+//    c = c+5
+//}
+//;
+//
+//
+//var a : Int;
+//var b : Int;
+//var c : Bool;
+//
+//a = 5;
+//b = 0;
+//print a;
+//
+//do {
+//    b and     a ~> skip
+//    b and not a ~> 
+//        if {
+//            c==1 ~> abort 
+//            c==2 ~> c = a; b=a
+//        }
+//}

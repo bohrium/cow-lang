@@ -5,7 +5,7 @@
     to use:
 '''
 
-from utils import CC
+from utils import CC, pre
 from preprocess import preprocess
 from tree import ParseTree, Text
 
@@ -38,6 +38,20 @@ class ParserGenerator:
 
         for symbol, rule in self.rules_by_symbol.items():
             self.parsers[symbol] = self.build_labeled(symbol, self.parser_from_disjunction(Text(rule)), symbol in self.ignore, symbol in self.unroll)
+
+    def final(self):
+        return (
+            lambda text: 
+                (lambda tree:
+                    (
+                        pre(
+                            text.is_at_end(),
+                            'failed to parse to end!:{}'.format(text.context())
+                        ),
+                        tree
+                    )[1]
+                )(self.parsers['MAIN'](text))
+        )
 
     def parser_from_disjunction(self, rule):
         subparsers = []
