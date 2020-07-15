@@ -1,0 +1,79 @@
+\documentclass{article}
+\usepackage[top=1in, bottom=1in, left=1in, right=1in]{geometry}
+\usepackage{listings}
+\usepackage{inconsolata}
+\usepackage[dvipsnames]{xcolor}
+\lstset{
+    %escapeinside={(*}{*)},
+    moredelim=[is][\color{PineGreen}]{(*}{*)},
+    moredelim=[is][\color{Bittersweet}]{(`}{`)},
+    basicstyle=\small\ttfamily,
+    columns=fixed
+}
+\newcommand{\key}[1]{{\color{PineGreen}{\tt#1}}}
+\newcommand{\typ}[1]{{\color{Bittersweet}{\tt#1}}}
+
+\begin{document}
+
+\begin{center}
+    \LARGE
+    The \texttt{Cow} Programming Language
+\end{center}
+    
+\setcounter{section}{-1}
+\section{Hello World}
+
+    \begin{lstlisting}
+        (*fn*) main():(`unit`)
+        {
+            print("hello world");
+        }
+    \end{lstlisting}
+
+\section{Control Flow}
+
+    \begin{lstlisting}
+        (*fn*) gcd(a:(`int`), b:(`int`)):(`int`)
+        {
+            (*if*) {
+                a==0 : 0
+                b==0 : 0
+                (*else*) : 
+                (*do*) {
+                    a<0 : a=-a
+                    b<0 : b=-b
+                }; (*do*) {
+                    a<b : b=mod(b,a)
+                    a>b : a=mod(a,b)
+                }; a
+            }
+        }
+    \end{lstlisting}
+
+\section{Types}
+
+\section{Generic Types}
+
+    \begin{lstlisting}
+        (*fn*) maybe(a:(`type`)):(`type`)
+        {
+            (*struct*)(none:(`unit`) | some:a) 
+        }
+
+        (*fn*) main():(`unit`)
+        {
+            s:maybe((`int`));
+            s.none = star; 
+            s.some = 5; 
+            (*switch*) s {
+                none : print("moo")  
+                some : print(s.some)  
+            }
+        }
+    \end{lstlisting}
+
+\section{Allocation}
+
+\section{Vectors and Strings}
+
+\end{document}

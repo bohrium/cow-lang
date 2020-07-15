@@ -1,0 +1,13 @@
+fn hey (moo:Int, hoo:Unit) {
+    var ff:Int;
+    do {
+        5 -> ff=4+2
+        6 -> { a=2; b=3 }
+        7 -> if {
+            8 -> george = 9*ff*9
+        }
+    };
+    h = 5
+}
+
+
