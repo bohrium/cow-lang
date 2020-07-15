@@ -1,11 +1,10 @@
 {-  author: samtenka
  -  change: 2020-07-14
  -  create: 2020-07-10
- -  descrp: 
- -  to use: 
- -
- -  Helped by Eli Bendersky's post on the Applicative typeclass:
- -      "Deciphering Haskell's applicative and monadic parsers"
+ -  descrp: combinator-based parsing for the COW language 
+ -  thanks: I found Eli Bendersky's post on the Applicative typeclass very
+ -          useful: "Deciphering Haskell's applicative and monadic parsers".
+ -  to use: `make parse` 
  -}
 
 import System.IO
@@ -115,17 +114,16 @@ size :: ETree -> Int
 size et = 1 + (case et of E _ ets -> sum (map size ets))
 
 showtree :: String -> ETree -> String
-showtree sp et = case et of
-                      E hd []     -> sp ++ hd 
-                      E hd (x:xs) -> if 15 < size et then (
-                                         sp ++ hd ++ "[\n" ++
-                                         intercalate ",\n" (map (showtree (sp ++ "  ")) (x:xs)) ++
-                                         "\n" ++ sp ++ "]"
-                                     ) else (
-                                         sp ++ hd ++ "[" ++
-                                         intercalate "," (map (showtree "") (x:xs)) ++
-                                         "]"
-                                     )
+showtree sp et =
+    let
+        base sep space kids = intercalate sep (map (showtree space) kids)
+    in case et of
+        E hd []   -> sp ++ hd 
+        E hd kids -> sp ++ hd ++ "[" ++ (
+                         if 15 < size et
+                         then "\n" ++ (base ",\n" (sp++" ") kids) ++ "\n" ++ sp
+                         else base "," "" kids
+                     ) ++ "]" 
 
 star :: String -> Parser a -> Parser ETree -> Parser ETree
 plus :: String -> Parser a -> Parser ETree -> Parser ETree
@@ -171,7 +169,7 @@ ctrl :: Parser ETree
 decl :: Parser ETree
 assi :: Parser ETree
 
-blck = star "blck" (spop ";") stmt
+blck = star "block" (spop ";") stmt
 
 gcmd = do cond <- expr  
           spop "->"
@@ -187,7 +185,7 @@ ctrl = do flvr <- ((spop "do") +++ (spop "if"))
 
 decl = do spop "var" 
           j <- judg
-          return (E "decl" [j])
+          return (E "declare" [j])
 
 assi = do nm <- iden 
           spop "="
@@ -207,7 +205,7 @@ jdgs = star "jdgs" (spop ",") judg
 judg = do nm <- iden
           spop ":"
           tp <- ptyp
-          return (E "judg" [nm, tp])
+          return (E "judge" [nm, tp])
 
 ptyp = do c <- (sat isUpper)
           cc <- (sats isLower)
@@ -244,27 +242,67 @@ iden  = promote (sats isLower)
 -- ============================================================================
 
 --translate :: ETree -> String
---
---trans_gcmd out gc = case gc of 
---                         E _ [cond, body] -> "if ( " ++ translate cond ++ " ) {" ++
---                                             translate body ++
---                                             "; }"
---
---translate et = case et of
---                    E "assi" [nm,vl] -> nm ++ "=" ++ translate vl   
---                    E "do" gs -> "do {" ++
---                                 concat (map (\ca -> "if ( "++(translate))translate gs) ++ 
---                                 "} while ( false );"
 
+trans_expr et = "EXPR" 
+
+trans_gcmd last gc =
+    case gc of E _ [cond, body] -> "if ( " ++ trans_expr cond ++ " ) {\n" ++
+                                   trans_stmt body ++ last ++
+                                   "}\n"
+trans_do et = 
+    case et of E "do" gcmds -> "do {\n" ++
+                               concat (map (trans_gcmd "continue;\n") gcmds) ++ 
+                               "} while ( false );\n"
+trans_if et = 
+    case et of E "if" gcmds -> "do {\n" ++
+                               concat (map (trans_gcmd "break;\n") gcmds) ++ 
+                               "abort();\n} while ( false );\n"
+
+trans_declare et = 
+    case et of E "declare" [E nm _] -> "var " ++ nm ++ ";\n"
+
+trans_assign et = 
+    case et of E "assign" [E nm _, vl] -> nm ++ "=" ++ trans_expr vl ++ ";\n"
+
+trans_block et =
+    case et of E "block" kids -> "{\n" ++ concat (map trans_stmt kids) ++ "}\n" 
+
+trans_stmt et =  
+    case et of E "assign" _ -> trans_assign et
+               E "do" _ -> trans_do et 
+               E "if" _ -> trans_if et 
+               E "block" _ -> trans_block et 
+               E "declare" _ -> trans_declare et 
+
+trans_func et =
+    case et of E "fn" [E nm _, args, body] -> "func " ++ nm ++ "() " ++ trans_block body
+
+trans_tlvl et =
+    case et of E "tlvl" kids -> concat (map trans_func kids)  
+        
 -- ============================================================================
 -- ===  4. MAIN LOOP  =========================================================
 -- ============================================================================
+
+indent text = indent_inner (lines text) 0
+indent_inner lns i = case lns of
+                          [] -> ""
+                          (l:ls) -> 
+                              let count s c = length (filter (==c) s) 
+                                  nb_open = count l '{'
+                                  nb_close = count l '}'
+                              in concat (replicate (i-nb_close) "    ") ++ l ++
+                                 "\n" ++ indent_inner ls (i-nb_close+nb_open)
 
 moo s = case parse tlvl s of
              Nothing -> "Failed to Parse" 
              Just (a, out) -> showtree "" a
 
+goo s = case parse tlvl s of
+             Nothing -> "Failed to Parse" 
+             Just (a, out) -> indent (trans_tlvl a)
+
 main = do putStr "hello!\n\n"
           contents <- readFile "moo.txt" 
-          putStr (moo contents)
+          putStr (goo contents)
           putStr "\n\nbye!\n"

@@ -1,4 +1,4 @@
-parse:
+parse: parse.hs
 	ghc parse.hs -o parse
 	./parse
 
