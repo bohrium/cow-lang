@@ -1,0 +1,150 @@
+//  author: samtenka
+//  change: 2020-03-14
+//  create: 2020-03-15
+//  descrp:
+//  to use:
+
+MAIN = _ OUTER_PROGRAM _
+
+//=============================================================================
+//====  0. GUARDED COMMAND LANGUAGE  ==========================================
+//=============================================================================
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~  0.0. Categorical Basics  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+//--------------------  0.0.0. sequencing  ------------------------------------
+
+OUTER_PROGRAM! = ( OUTER_STATEMENT _ ( ";" _ OUTER_PROGRAM | EMPTY ) | EMPTY )   
+OUTER_STATEMENT! = TYPE_DEFN | FUNCTION
+
+INNER_PROGRAM! = ( INNER_STATEMENT ( _ ";" _ INNER_PROGRAM | EMPTY ) | EMPTY )   
+INNER_STATEMENT! = SKIP | ABORT | IF | DO | MATCH | PRINT | DECLARATION | ASSIGNMENT
+
+//--------------------  0.0.1. initial and terminal constructs  ---------------
+
+ABORT = "abort"
+SKIP = "skip"
+
+DECLARATION = "var" _ JUDGEMENT
+PRINT = "print" _ LOWER_IDENT
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~  0.1. Guarded Composititions  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+EXPR_GUARDED_PROGRAM = EXPR _ "~>" _ INNER_PROGRAM
+
+IDENT_PAIR_GUARDED_PROGRAM = IDENT_PAIR _ "~>" _ INNER_PROGRAM
+IDENT_PAIR = LOWER_IDENT _ LOWER_IDENT
+
+IDENT_GUARDED_EXPR = LOWER_IDENT _ "~>" _ EXPR
+
+//--------------------  0.1.0. alternative construct  -------------------------
+
+IF = "if" _ "{" _ IF_BODY _ "}"
+IF_BODY! = EXPR_GUARDED_PROGRAM _ ( IF_BODY | EMPTY )
+
+//--------------------  0.1.1. repetitive construct  --------------------------
+
+DO = "do" _ "{" _ DO_BODY _ "}"
+DO_BODY! = EXPR_GUARDED_PROGRAM _ ( DO_BODY | EMPTY )
+
+//--------------------  0.1.2. coproduct matching construct  ------------------
+
+MATCH = "match" _  EXPR _ "{" _ MATCH_BODY _ "}"
+MATCH_BODY! =  IDENT_PAIR_GUARDED_PROGRAM _ ( MATCH_BODY | EMPTY )
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~  0.2. Assignment  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ASSIGNMENT = EXPR _ "=" _ EXPR
+
+//=============================================================================
+//====  1. OUTER DEFINITIONS  =================================================
+//=============================================================================
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~  1.0. Type Definition  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+TYPE_DEFN = COMP_KIND _ UPPER_IDENT _ "{" _  JUDGEMENTS _ "}"
+COMP_TYPE = COMP_KIND _ "{"  _  JUDGEMENTS _ "}"
+TYPE = BASE_TYPE | COMP_TYPE | REF_TYPE 
+REF_TYPE = "ref" _ TYPE
+BASE_TYPE = "Unit" | "Bool" | "Char" | "Int" | "Float" | UPPER_IDENT 
+COMP_KIND = "struct" | "enum" 
+JUDGEMENTS! = JUDGEMENT _ ( ";" _ JUDGEMENTS | EMPTY )
+JUDGEMENT = LOWER_IDENT _ ":" _ TYPE
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~  1.1. Function Definition  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+FUNCTION = "fn" _ FUNCTION_HEADER _ FUNCTION_BODY
+FUNCTION_HEADER = LOWER_IDENT _ FUNCTION_TYPE
+FUNCTION_TYPE = "(" _ FUNCTION_ARG_LIST _ ")" _ ":" _ TYPE
+FUNCTION_BODY! = "{" _ INNER_PROGRAM _ "}"
+FUNCTION_ARG_LIST! = JUDGEMENT _ ( "," _ FUNCTION_ARG_LIST | EMPTY ) | EMPTY
+
+//=============================================================================
+//====  2. EXPRS  =======================================================
+//=============================================================================
+
+EXPR = OR_EXPR
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~  3.0. logic  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+OR_EXPR! = AND_EXPR _ ( "or" _ OR_EXPR | EMPTY )
+AND_EXPR! = NOT_EXPR _ ( "and" _ AND_EXPR | EMPTY )
+NOT_EXPR! = "not" _ NOT_EXPR | "true" | "false" | EQ_EXPR
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~  3.1. comparisons  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+EQ_EXPR! = PLUS_EXPR _ ( ( "==" | "!=" | "<=" | "<" | ">=" | ">" ) _ EQ_EXPR | EMPTY )
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~  3.2. arithmetic  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+PLUS_EXPR! = TIMES_EXPR _ ( ( "+" | "-" ) _ PLUS_EXPR | EMPTY )
+TIMES_EXPR! = NEG_EXPR _ ( ( "*" | "/" | "%" ) _ TIMES_EXPR | EMPTY )
+NEG_EXPR! = ("-" _ | EMPTY ) ( NUMBER | FACTOR )
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~  3.3. leaves  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+FACTOR! = "(" _ EXPR _ ")" | POTENTIAL_FUNC_CALL | UNIVERSAL_PROP 
+
+UNIVERSAL_PROP = UPPER_IDENT _ "(" _ UNIVERSAL_PROP_ARGS _ ")"
+UNIVERSAL_PROP_ARGS! = EXPR _ ( "," _ UNIVERSAL_PROP_ARGS | EMPTY ) | EMPTY
+
+POTENTIAL_FUNC_CALL = LOWER_IDENT _ ( "(" _ FUNC_CALL_ARGS _ ")" | EMPTY )
+FUNC_CALL_ARGS! = EXPR _ ( "," _ FUNC_CALL_ARGS | EMPTY ) | EMPTY
+
+//=============================================================================
+//====  3. LEXER  =============================================================
+//=============================================================================
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~  3.0. identifiers  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+UPPER_IDENT = UPPER UPPER_IDENTLOOP
+LOWER_IDENT = LOWER LOWER_IDENTLOOP
+
+UPPER_IDENTLOOP! = ( ( LOWER | UPPER     ) UPPER_IDENTLOOP | EMPTY )
+LOWER_IDENTLOOP! = ( ( LOWER | "_" LOWER ) LOWER_IDENTLOOP | EMPTY )
+
+UPPER* = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M" | "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z"
+LOWER* = "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z" 
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~  3.1. numbers  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+NUMBER = NUMBERLOOP ( "." NUMBERLOOP | EMPTY )
+NUMBERLOOP! = DIGIT ( NUMBERLOOP | EMPTY )
+DIGIT* = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~~~~~~~~~~  3.2. whitespace  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+_* = WHITE
+WHITE* = " " WHITE | EMPTY
+EMPTY* = ""
