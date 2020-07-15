@@ -150,8 +150,10 @@ tlvl = star "tlvl" (return []) (func +++ strc)
 func = do spop "fn"
           nm <- iden
           args <- wrap (spop "(") jdgs (spop ")")
+          spop ":"
+          out <- ptyp
           body <- wrap (spop "{") blck (spop "}")
-          return (E "fn" [nm, args, body]) 
+          return (E "fn" [nm, args, out, body]) 
 
 strc = do spop "tp"
           nm <- iden
@@ -184,8 +186,8 @@ ctrl = do flvr <- ((spop "do") +++ (spop "if"))
           return (E flvr b)
 
 decl = do spop "var" 
-          j <- judg
-          return (E "declare" [j])
+          E _ j <- judg
+          return (E "declare" j)
 
 assi = do nm <- iden 
           spop "="
@@ -231,7 +233,7 @@ term = do a <- fact
               return (E op [a, b])) +++ return a
 
 fact = (do x <- (wrap (spop "(") expr (spop ")")) 
-           return x) +++ numb +++ iden
+           return (E "paren" [x])) +++ numb +++ iden
 
 numb  = promote (sats isDigit)
 
@@ -243,7 +245,20 @@ iden  = promote (sats isLower)
 
 --translate :: ETree -> String
 
-trans_expr et = "EXPR" 
+trans_expr et = case et of E "+" [a,b] -> trans_term a ++ "+" ++ trans_expr b
+                           E "-" [a,b] -> trans_term a ++ "-" ++ trans_expr b
+                           otherwise -> trans_term et 
+trans_term et = case et of E "*" [a,b] -> trans_fact a ++ "*" ++ trans_term b
+                           E "/" [a,b] -> trans_fact a ++ "/" ++ trans_term b
+                           otherwise -> trans_fact et 
+trans_fact et = case et of E "paren" [e] -> trans_expr e
+                           E nm _ -> nm
+
+trans_judge j = 
+    case j of E "judge" [E nm [], E tp []] -> tp ++ " " ++ nm
+
+trans_judges jj =   
+    case jj of E "jdgs" kids -> intercalate ", " (map trans_judge kids)
 
 trans_gcmd last gc =
     case gc of E _ [cond, body] -> "if ( " ++ trans_expr cond ++ " ) {\n" ++
@@ -259,7 +274,7 @@ trans_if et =
                                "abort();\n} while ( false );\n"
 
 trans_declare et = 
-    case et of E "declare" [E nm _] -> "var " ++ nm ++ ";\n"
+    case et of E "declare" [E nm _, E tp _] -> tp ++ " " ++ nm ++ ";\n"
 
 trans_assign et = 
     case et of E "assign" [E nm _, vl] -> nm ++ "=" ++ trans_expr vl ++ ";\n"
@@ -275,7 +290,7 @@ trans_stmt et =
                E "declare" _ -> trans_declare et 
 
 trans_func et =
-    case et of E "fn" [E nm _, args, body] -> "func " ++ nm ++ "() " ++ trans_block body
+    case et of E "fn" [E nm _, args, E out _, body] -> out ++ " " ++ nm ++ "(" ++ trans_judges args ++ ") " ++ trans_block body
 
 trans_tlvl et =
     case et of E "tlvl" kids -> concat (map trans_func kids)  

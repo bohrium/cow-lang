@@ -1,4 +1,4 @@
-fn hey (moo:Int, hoo:Unit) {
+fn hey (moo:Int, hoo:Unit) : Unit {
     var ff:Int;
     do {
         5 -> ff=4+2
